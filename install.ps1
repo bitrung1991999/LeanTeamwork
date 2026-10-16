@@ -45,6 +45,10 @@ try {
     $shortcut.WorkingDirectory = Join-Path $PSScriptRoot "widget"
     $shortcut.WindowStyle = 7
     $shortcut.Description = "Khởi động Antigravity Quota Widget & Teamwork HUD"
+    $icoPath = Join-Path $PSScriptRoot "widget\assets\antigravity-widget-launcher.ico"
+    if (Test-Path $icoPath) {
+        $shortcut.IconLocation = "$icoPath,0"
+    }
     $shortcut.Save()
     Write-Host "  ✓ Đã tạo shortcut 'Antigravity Widget' trên Desktop!" -ForegroundColor Green
 } catch {

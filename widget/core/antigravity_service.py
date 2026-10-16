@@ -182,3 +182,16 @@ def query_antigravity_data():
 
 def switch_active_account(account_id, email=None):
     return False
+
+
+def get_antigravity_detail_rows():
+    native = get_native_antigravity_account()
+    if native and native.get("email"):
+        return [{"id": "native_ide", "email": native["email"], "clean_name": mask_email(native["email"]), "is_active": True, "g_5h": 100, "c_5h": 100, "g_w": 100, "c_w": 100, "status_text": native.get("plan") or "Antigravity IDE"}]
+    return []
+
+def get_recent_antigravity_rows():
+    return get_antigravity_detail_rows()
+
+def get_top_quota_accounts(limit=4):
+    return get_antigravity_detail_rows()[:limit]

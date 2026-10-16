@@ -47,7 +47,7 @@ def find_window(preferred_hwnd=None):
             return True
         pid = w.DWORD()
         user32.GetWindowThreadProcessId(hwnd, c.byref(pid))
-        if os.path.basename(_image_path(pid.value)) != "antigravity ide.exe":
+        if os.path.basename(_image_path(pid.value)) not in ("antigravity.exe", "antigravity ide.exe"):
             return True
         rect = w.RECT()
         if not user32.GetWindowRect(hwnd, c.byref(rect)):
@@ -57,8 +57,12 @@ def find_window(preferred_hwnd=None):
         return True
 
     user32.EnumWindows(callback_type(visit), 0)
-    for collection in (visible, minimized):
-        for item in collection:
-            if preferred_hwnd and item[0] == preferred_hwnd:
-                return item
-    return visible[0] if visible else (minimized[0] if minimized else None)
+    for item in visible:
+        if preferred_hwnd and item[0] == preferred_hwnd:
+            return item
+    if visible:
+        return visible[0]
+    for item in minimized:
+        if preferred_hwnd and item[0] == preferred_hwnd:
+            return item
+    return minimized[0] if minimized else None

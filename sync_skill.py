@@ -34,6 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 GLOBAL_CONFIG_DIR = Path(os.path.expanduser("~")) / ".gemini" / "config"
 GLOBAL_SKILL_DIR = GLOBAL_CONFIG_DIR / "skills" / "lean-teamwork"
 BUILTIN_SKILL_DIR = Path(os.path.expanduser("~")) / ".gemini" / "antigravity" / "builtin" / "skills" / "lean-teamwork"
+BUILTIN_IDE_SKILL_DIR = Path(os.path.expanduser("~")) / ".gemini" / "antigravity-ide" / "builtin" / "skills" / "lean-teamwork"
 
 def parse_semver(v_str: str):
     parts = v_str.strip().split(".")
@@ -170,17 +171,19 @@ def uninstall_from_antigravity():
         except Exception as e:
             print(f"  ⚠ Lỗi xóa thư mục skill: {e}")
 
-    # 4. Xóa Builtin skill (nếu có)
-    if BUILTIN_SKILL_DIR.exists():
-        try:
-            force_rmtree(BUILTIN_SKILL_DIR)
-            print("  ✓ Đã xóa thư mục builtin skill ~/.gemini/antigravity/builtin/skills/lean-teamwork")
-        except Exception as e:
-            print(f"  ⚠ Lỗi xóa builtin skill: {e}")
+    # 4. Xóa Builtin skill (nếu có) trên cả Antigravity 2.0 và Antigravity IDE
+    for b_dir in (BUILTIN_SKILL_DIR, BUILTIN_IDE_SKILL_DIR):
+        if b_dir.exists():
+            try:
+                force_rmtree(b_dir)
+                print(f"  ✓ Đã xóa thư mục builtin skill {b_dir}")
+            except Exception as e:
+                print(f"  ⚠ Lỗi xóa builtin skill {b_dir}: {e}")
 
     # 5. Dọn dẹp GEMINI.md toàn cục
     gemini_candidates = [
         Path(os.path.expanduser("~")) / ".gemini" / "antigravity" / "GEMINI.md",
+        Path(os.path.expanduser("~")) / ".gemini" / "antigravity-ide" / "GEMINI.md",
         Path(os.path.expanduser("~")) / ".gemini" / "GEMINI.md",
         GLOBAL_CONFIG_DIR / "GEMINI.md"
     ]
@@ -255,7 +258,19 @@ def uninstall_from_antigravity():
     print("============================================================")
 
 def ensure_stock_gemini():
-    pass
+    """Đảm bảo GEMINI.md toàn cục có mặt trên cả Antigravity 2.0 (~/.gemini/antigravity) và Antigravity IDE (~/.gemini/antigravity-ide)."""
+    user_home = Path(os.path.expanduser("~"))
+    src_gemini = user_home / ".gemini" / "GEMINI.md"
+    if not src_gemini.exists():
+        src_gemini = user_home / ".gemini" / "antigravity" / "GEMINI.md"
+    if src_gemini.exists():
+        content = src_gemini.read_text(encoding="utf-8")
+        for target_dir in (user_home / ".gemini" / "antigravity", user_home / ".gemini" / "antigravity-ide"):
+            if target_dir.exists():
+                try:
+                    (target_dir / "GEMINI.md").write_text(content, encoding="utf-8")
+                except Exception:
+                    pass
 
 def ensure_global_hooks():
     pass
@@ -290,14 +305,15 @@ def sync_source_to_installed(version: str):
     (GLOBAL_SKILL_DIR / "VERSION").write_text(version + "\n", encoding="utf-8")
     print(f"  ✓ [PULL] Đã ghi VERSION {version} vào {GLOBAL_SKILL_DIR}")
 
-    # Đồng bộ Lean Teamwork thành BUILTIN SKILL chính thức của IDE Antigravity
-    try:
-        BUILTIN_SKILL_DIR.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source_skill_dir, BUILTIN_SKILL_DIR, dirs_exist_ok=True)
-        (BUILTIN_SKILL_DIR / "VERSION").write_text(version + "\n", encoding="utf-8")
-        print(f"  ✓ [BUILTIN] Đã gắn chặt Lean Teamwork vào Antigravity IDE Builtin Skills!")
-    except Exception as e:
-        pass
+    # Đồng bộ Lean Teamwork thành BUILTIN SKILL chính thức của cả Antigravity 2.0 và Antigravity IDE
+    for b_dir in (BUILTIN_SKILL_DIR, BUILTIN_IDE_SKILL_DIR):
+        try:
+            b_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source_skill_dir, b_dir, dirs_exist_ok=True)
+            (b_dir / "VERSION").write_text(version + "\n", encoding="utf-8")
+            print(f"  ✓ [BUILTIN] Đã gắn chặt Lean Teamwork vào Builtin Skills ({b_dir.parent.parent.name})!")
+        except Exception:
+            pass
 
     # Tự động đồng bộ Widget sang Desktop project nếu đang chạy từ ổ F
     desktop_project_widget = Path(os.path.expanduser("~")) / "Desktop" / "Du An" / "antigravity-lean-teamwork" / "widget"

@@ -152,6 +152,62 @@ class CockpitOverlayApp:
         if hasattr(self, 'hwnd') and self.hwnd:
             user32.SetWindowPos(self.hwnd, 0, 0, 0, self.w, self.h, 0x0002 | 0x0004 | 0x0010)
 
+    def _get_effective_host_rect(self, host_rect=None):
+        """Return (raw_left, raw_top, raw_right, raw_bottom, eff_left, eff_top, eff_right, eff_bottom)
+        clamped against the desktop WorkArea so maximized window invisible borders (-8px)
+        and the Windows Taskbar never clip or hide the anchored widget."""
+        rc_work = w.RECT()
+        if not user32.SystemParametersInfoW(0x0030, 0, c.byref(rc_work), 0):
+            rc_work.left, rc_work.top = 0, 0
+            rc_work.right = user32.GetSystemMetrics(0)
+            rc_work.bottom = user32.GetSystemMetrics(1)
+
+        if not host_rect:
+            host_rect = self.last_codex_rect
+        if not host_rect:
+            host = find_codex_window(include_minimized=True, preferred_hwnd=self.last_codex_hwnd)
+            if host:
+                _, l, t, r, b, _ = host
+                if l > -10000 and t > -10000 and (r - l) > 200 and (b - t) > 200:
+                    host_rect = (l, t, r, b)
+                    self.last_codex_rect = host_rect
+
+        if not host_rect:
+            wl, wt, wr, wb = rc_work.left, rc_work.top, rc_work.right, rc_work.bottom
+            return wl, wt, wr, wb, wl, wt, wr, wb
+
+        raw_l, raw_t, raw_r, raw_b = host_rect
+        wl, wt, wr, wb = rc_work.left, rc_work.top, rc_work.right, rc_work.bottom
+
+        eff_l = max(raw_l, wl) if (raw_l < wl < raw_r) else raw_l
+        eff_t = max(raw_t, wt) if (raw_t < wt < raw_b) else raw_t
+        eff_r = min(raw_r, wr) if (raw_l < wr < raw_r) else raw_r
+        eff_b = min(raw_b, wb) if (raw_t < wb <= raw_b) else raw_b
+        return raw_l, raw_t, raw_r, raw_b, eff_l, eff_t, eff_r, eff_b
+
+    def _compute_preset_coords(self, preset, host_rect=None):
+        """Compute (target_x, target_y, rel_x, rel_y) for any of the 6 anchor presets."""
+        raw_l, raw_t, raw_r, raw_b, eff_l, eff_t, eff_r, eff_b = self._get_effective_host_rect(host_rect)
+        eff_w = max(self.w + 16, eff_r - eff_l)
+
+        if preset == 'top_left':
+            target_x = eff_l + 80
+        elif preset == 'bottom_left':
+            target_x = eff_l + 14
+        elif preset in ('top_center', 'bottom_center'):
+            target_x = eff_l + int((eff_w - self.w) / 2)
+        else:  # 'top_right', 'bottom_right'
+            target_x = eff_r - self.w - 14
+
+        if preset in ('bottom_left', 'bottom_center', 'bottom_right'):
+            target_y = eff_b - self.h - 10
+        else:  # 'top_left', 'top_center', 'top_right'
+            target_y = eff_t + 32
+
+        target_x = max(eff_l + 4, min(target_x, max(eff_l + 4, eff_r - self.w - 4)))
+        target_y = max(eff_t + 4, min(target_y, max(eff_t + 4, eff_b - self.h - 4)))
+        return target_x, target_y, target_x - raw_l, target_y - raw_t
+
     def _dock_to_visible_antigravity(self):
         """Follow the live Antigravity window when present, or stay floating on desktop in compact mode."""
         host = find_codex_window(include_minimized=True, preferred_hwnd=self.last_codex_hwnd)
@@ -181,35 +237,40 @@ class CockpitOverlayApp:
             user32.ShowWindow(self.hwnd, 8)  # SW_SHOWNA
         self.is_visible = True
 
-        # Khi chuyển đổi giữa Có Antigravity <-> Không có Antigravity:
-        if is_active != old_active:
-            self.sync_dimensions()
+        # Khi chuyển đổi giữa Có Antigravity <-> Không có Antigravity, hoặc khi chiều rộng thay đổi (Teamwork active/idle):
+        old_w, old_h = self.w, self.h
+        self.sync_dimensions()
+        if is_active != old_active or (self.w, self.h) != (old_w, old_h):
             self.update_layered_render()
 
         if not is_active:
             # Khi KHÔNG CÓ Antigravity hoặc đang dùng app khác: Thu lại về chỉ mỗi chip Nghiệm thu nổi trên desktop
             return
 
-        # Khi CÓ Antigravity: Dock vào góc trên cửa sổ IDE
+        # Khi CÓ Antigravity: Dock vào vị trí neo đã chọn trên cửa sổ IDE
         if not self.s.get('locked'):
             return
 
         if self.resizing or getattr(self, 'native_drag', False) or getattr(self, 'in_sizemove', False) or self.drag:
             return
-        rel_x, rel_y = self.s.get('rel_x'), self.s.get('rel_y')
-        if rel_x is None or rel_y is None:
-            self.s['rel_x'] = max(8, right - left - self.w - 18)
-            self.s['rel_y'] = 40
-            save_state(self.s)
 
-        cur_rel_x = self.s.get('rel_x', 8)
-        cur_rel_y = self.s.get('rel_y', 40)
-        if cur_rel_y > 400 or cur_rel_y < 0:
-            cur_rel_y = 40
-            self.s['rel_y'] = 40
-
-        target_x = max(left, min(left + cur_rel_x, max(left, right - self.w)))
-        target_y = max(top, min(top + cur_rel_y, max(top, bottom - self.h)))
+        preset = self.s.get('anchor_preset', 'top_right')
+        if preset in ('top_left', 'top_center', 'top_right', 'bottom_left', 'bottom_center', 'bottom_right'):
+            target_x, target_y, rel_x, rel_y = self._compute_preset_coords(preset, (left, top, right, bottom))
+            self.s['rel_x'], self.s['rel_y'] = rel_x, rel_y
+        else:
+            raw_l, raw_t, raw_r, raw_b, eff_l, eff_t, eff_r, eff_b = self._get_effective_host_rect((left, top, right, bottom))
+            cur_rel_x = self.s.get('rel_x')
+            cur_rel_y = self.s.get('rel_y')
+            if cur_rel_x is None or cur_rel_y is None:
+                target_x, target_y, cur_rel_x, cur_rel_y = self._compute_preset_coords('top_right', (left, top, right, bottom))
+                self.s['rel_x'], self.s['rel_y'] = cur_rel_x, cur_rel_y
+                save_state(self.s)
+            else:
+                target_x = max(eff_l + 4, min(raw_l + cur_rel_x, max(eff_l + 4, eff_r - self.w - 4)))
+                target_y = max(eff_t + 4, min(raw_t + cur_rel_y, max(eff_t + 4, eff_b - self.h - 4)))
+                self.s['rel_x'] = target_x - raw_l
+                self.s['rel_y'] = target_y - raw_t
 
         if (target_x, target_y) == (self.s['x'], self.s['y']):
             return
@@ -235,32 +296,19 @@ class CockpitOverlayApp:
         self.update_layered_render()
 
     def snap_to_preset(self, preset):
-        """Snap widget to predefined anchor on host window."""
-        if not self.last_codex_rect:
-            return
-        left, top, right, bottom = self.last_codex_rect
-        host_w = right - left
-        host_h = bottom - top
-
-        if preset == 'top_right':
-            self.s['rel_x'] = max(8, host_w - self.w - 18)
-            self.s['rel_y'] = 40
-        elif preset == 'top_center':
-            self.s['rel_x'] = max(8, int((host_w - self.w) / 2))
-            self.s['rel_y'] = 40
-        elif preset == 'bottom_right':
-            self.s['rel_x'] = max(8, host_w - self.w - 18)
-            self.s['rel_y'] = max(8, host_h - self.h - 14)
-        elif preset == 'bottom_center':
-            self.s['rel_x'] = max(8, int((host_w - self.w) / 2))
-            self.s['rel_y'] = max(8, host_h - self.h - 14)
-        elif preset == 'top_left':
-            self.s['rel_x'] = 80
-            self.s['rel_y'] = 40
-
+        """Snap widget to predefined anchor on host window (top/bottom x left/center/right)."""
+        if preset not in ('top_left', 'top_center', 'top_right', 'bottom_left', 'bottom_center', 'bottom_right'):
+            preset = 'top_right'
+        self.s['anchor_preset'] = preset
         self.s['locked'] = True
+        self.sync_dimensions()
+        target_x, target_y, rel_x, rel_y = self._compute_preset_coords(preset, self.last_codex_rect)
+        self.s['rel_x'] = rel_x
+        self.s['rel_y'] = rel_y
+        self.s['x'] = target_x
+        self.s['y'] = target_y
         save_state(self.s)
-        self._dock_to_visible_antigravity()
+        self.move_in_codex_layer(target_x, target_y)
         self.update_layered_render()
 
     def move_in_codex_layer(self, x, y, *, show=True, dragging=False):
@@ -1210,6 +1258,8 @@ class CockpitOverlayApp:
             return
         if self.teamwork_popover.visible:
             self.teamwork_popover.hide()
+            self.popover_until = 0.0
+            self.teamwork_popover.suppress_until = time.monotonic() + 1.2
             return
         for z_id, zx, zy, zw, zh in self.zones:
             if z_id == 'teamwork':
@@ -1217,7 +1267,15 @@ class CockpitOverlayApp:
                 user32.GetWindowRect(self.hwnd, c.byref(wrect))
                 chip_rect = (wrect.left + zx, wrect.top + zy, wrect.left + zx + zw, wrect.top + zy + zh)
                 self.teamwork_popover.show(chip_rect)
-                self.popover_until = time.monotonic() + 4.0
+                tw_info = self.teamwork_service.get_display_info() if self.teamwork_service else {}
+                current_tw_st = tw_info.get('status', 'IDLE')
+                if current_tw_st == 'PROPOSAL':
+                    rem_sec = max(5, tw_info.get('remaining_seconds', 150))
+                    self.popover_until = time.monotonic() + rem_sec + 5.0
+                elif current_tw_st == 'ACCEPTANCE':
+                    self.popover_until = time.monotonic() + 86400.0
+                else:
+                    self.popover_until = time.monotonic() + 10.0
                 break
 
     def toggle_account_popover(self):
@@ -1537,11 +1595,14 @@ class CockpitOverlayApp:
         user32.AppendMenuW(hmenu, 0, 301, lock_txt)
 
         anchor_menu = user32.CreatePopupMenu()
-        user32.AppendMenuW(anchor_menu, 0, 311, "↗ Góc Trên - Phải (Header / Tab bar)")
-        user32.AppendMenuW(anchor_menu, 0, 312, "⬆ Góc Trên - Giữa")
-        user32.AppendMenuW(anchor_menu, 0, 313, "↘ Góc Dưới - Phải (Status bar)")
-        user32.AppendMenuW(anchor_menu, 0, 314, "⬇ Góc Dưới - Giữa")
-        user32.AppendMenuW(anchor_menu, 0, 315, "↖ Góc Trên - Trái")
+        cur_anchor = self.s.get('anchor_preset', 'top_right')
+        user32.AppendMenuW(anchor_menu, 0x0008 if cur_anchor == 'top_left' else 0, 315, "↖ Góc Trên - Trái")
+        user32.AppendMenuW(anchor_menu, 0x0008 if cur_anchor == 'top_center' else 0, 312, "⬆ Góc Trên - Giữa")
+        user32.AppendMenuW(anchor_menu, 0x0008 if cur_anchor == 'top_right' else 0, 311, "↗ Góc Trên - Phải (Header / Tab bar)")
+        user32.AppendMenuW(anchor_menu, 0x0800, 0, None)
+        user32.AppendMenuW(anchor_menu, 0x0008 if cur_anchor == 'bottom_left' else 0, 316, "↙ Góc Dưới - Trái (Status bar)")
+        user32.AppendMenuW(anchor_menu, 0x0008 if cur_anchor == 'bottom_center' else 0, 314, "⬇ Góc Dưới - Giữa (Status bar)")
+        user32.AppendMenuW(anchor_menu, 0x0008 if cur_anchor == 'bottom_right' else 0, 313, "↘ Góc Dưới - Phải (Status bar)")
         user32.AppendMenuW(hmenu, 0x0010, anchor_menu, "📌 Vị trí Neo trên Antigravity (Anchors)")
 
         user32.AppendMenuW(hmenu, 0, 302, "📍 Đặt lại vị trí mặc định trên Antigravity")
@@ -1563,6 +1624,7 @@ class CockpitOverlayApp:
             selected_scale = scale_options[cmd - 501][0]
             self.s['scale_percent'] = selected_scale
             self.sync_dimensions()
+            self._dock_to_visible_antigravity()
             self.move_in_codex_layer(self.s['x'], self.s['y'])
             save_state(self.s)
             self.update_layered_render()
@@ -1603,13 +1665,14 @@ class CockpitOverlayApp:
         elif cmd == 301:
             self.set_locked(not self.s['locked'])
             return
-        elif 311 <= cmd <= 315:
+        elif 311 <= cmd <= 316:
             presets = {
                 311: 'top_right',
                 312: 'top_center',
                 313: 'bottom_right',
                 314: 'bottom_center',
-                315: 'top_left'
+                315: 'top_left',
+                316: 'bottom_left',
             }
             self.snap_to_preset(presets[cmd])
             return
@@ -1627,6 +1690,7 @@ class CockpitOverlayApp:
             return
 
         self.sync_dimensions()
+        self._dock_to_visible_antigravity()
         self.move_in_codex_layer(self.s['x'], self.s['y'])
         save_state(self.s)
         self.update_layered_render()
@@ -1653,6 +1717,8 @@ class CockpitOverlayApp:
 
         rect = w.RECT()
         user32.GetWindowRect(hwnd, c.byref(rect))
+        if (rect.left, rect.top) != (self.s.get('x'), self.s.get('y')):
+            self.s['anchor_preset'] = 'custom'
         self.s['x'], self.s['y'] = rect.left, rect.top
         if self.last_codex_rect:
             cl, ct, _, _ = self.last_codex_rect
@@ -1733,8 +1799,11 @@ class CockpitOverlayApp:
             try:
                 self.popover = CockpitGlassPopover(self)
                 self.teamwork_popover = TeamworkGlassPopover(self)
-            except Exception:
-                pass
+            except Exception as e:
+                with LOG_PATH.open('a', encoding='utf-8') as f:
+                    import traceback
+                    f.write(f"ERROR creating popovers: {traceback.format_exc()}\n")
+                    f.flush()
 
             user32.SetTimer(hwnd, 1, 15000, None)
             user32.SetTimer(hwnd, 2, 250, None)
@@ -1767,8 +1836,7 @@ class CockpitOverlayApp:
                 tw_updated_at = tw_info.get('updated_at', 0.0)
                 last_tw_updated_at = getattr(self, '_last_tw_updated_at', 0.0)
 
-                # Do not auto-popup: status updates smoothly on the Teamwork chip.
-                # The detailed popover is only opened when the user explicitly clicks the chip.
+                # Auto-popup when a new proposal or acceptance arrives from Antigravity IDE
                 has_pending_response = bool(self.teamwork_service and self.teamwork_service.get_state().get('response'))
                 is_new_event = (current_tw_st in ('PROPOSAL', 'ACCEPTANCE')) and not has_pending_response and (
                     current_tw_st != last_tw_st or tw_updated_at > last_tw_updated_at
@@ -1777,12 +1845,31 @@ class CockpitOverlayApp:
                     self._last_tw_status = current_tw_st
                     self._last_tw_updated_at = tw_updated_at
                     self._proposal_auto_handled = False
-                    # Proposal state remains active, but its panel is opened
-                    # only by an explicit click on the Teamwork chip.
-                elif current_tw_st in ('IDLE', 'EXECUTING') and last_tw_st not in ('IDLE', 'EXECUTING'):
+                    if self.teamwork_popover:
+                        chip_rect = None
+                        if user32.IsWindowVisible(hwnd):
+                            for z_id, zx, zy, zw, zh in self.zones:
+                                if z_id == 'teamwork':
+                                    wrect = w.RECT()
+                                    user32.GetWindowRect(hwnd, c.byref(wrect))
+                                    chip_rect = (wrect.left + zx, wrect.top + zy, wrect.left + zx + zw, wrect.top + zy + zh)
+                                    break
+                        if not chip_rect:
+                            rc_work = w.RECT()
+                            user32.SystemParametersInfoW(0x0030, 0, c.byref(rc_work), 0)
+                            chip_rect = (rc_work.right - 260, rc_work.top + 40, rc_work.right - 40, rc_work.top + 72)
+
+                        self.teamwork_popover.show(chip_rect)
+                        if current_tw_st == 'PROPOSAL':
+                            rem_sec = max(5, tw_info.get('remaining_seconds', 150))
+                            self.popover_until = time.monotonic() + rem_sec + 5.0
+                        else:
+                            self.popover_until = time.monotonic() + 86400.0
+                if current_tw_st in ('IDLE', 'EXECUTING'):
                     self._last_tw_status = current_tw_st
                     if self.teamwork_popover and self.teamwork_popover.visible:
                         self.teamwork_popover.hide()
+                        self.popover_until = 0.0
 
                 # Auto-fallback: Khi Proposal đếm hết thời gian (rem_sec <= 0), tự động ghi nhận phương án [1]
                 if current_tw_st == 'PROPOSAL':
@@ -1791,9 +1878,9 @@ class CockpitOverlayApp:
                         self._proposal_auto_handled = True
                         if self.teamwork_popover:
                             self.teamwork_popover.feedback_text = "⏱️ Hết giờ: Đã tự động chọn [1] (Khuyên dùng)"
-                            self.teamwork_popover.feedback_until = time.monotonic() + 3.0
+                            self.teamwork_popover.feedback_until = time.monotonic() + 1.2
+                            self.teamwork_popover.auto_hide_at = time.monotonic() + 0.8
                             self.teamwork_popover.render()
-                            self.teamwork_popover.auto_hide_at = time.monotonic() + 1.8
                         if hasattr(self, 'teamwork_service'):
                             self.teamwork_service.submit_response('SELECT_OPTION', option_id=1, note="Auto-selected [1] on countdown timeout")
 
@@ -1801,7 +1888,8 @@ class CockpitOverlayApp:
                     pt = POINT()
                     user32.GetCursorPos(c.byref(pt))
                     if self.teamwork_popover.contains_point(pt.x, pt.y):
-                        self.popover_until = max(self.popover_until, time.monotonic() + 3.0)
+                        if current_tw_st not in ('PROPOSAL', 'ACCEPTANCE'):
+                            self.popover_until = max(self.popover_until, time.monotonic() + 3.0)
                         self.teamwork_popover.render()
                     elif time.monotonic() >= self.popover_until:
                         self.teamwork_popover.hide()
@@ -1936,8 +2024,13 @@ class CockpitOverlayApp:
                     self.resizing = False
                     self.in_sizemove = False
                     user32.ReleaseCapture()
-                    if msg == 0x0202 and pending_click:
-                        self.activate_button(pending_click)
+                    if msg == 0x0202:
+                        if self.teamwork_popover and self.teamwork_popover.visible:
+                            self.teamwork_popover.hide()
+                            self.popover_until = 0.0
+                            self.teamwork_popover.suppress_until = time.monotonic() + 1.2
+                        elif pending_click:
+                            self.activate_button(pending_click)
             return 0
 
         elif msg in (0x0232, 0x00A2):  # WM_EXITSIZEMOVE / WM_NCLBUTTONUP

@@ -73,18 +73,20 @@ class TeamworkService:
             title = acc.get("title", "Nghiệm thu Hoàn thiện")
             test_st = acc.get("status", "PASS")
             exit_code = acc.get("exit_code", 0)
+            surface = acc.get("surface") or "Antigravity 2.0"
             return {
                 "active": True,
                 "status": "ACCEPTANCE",
-                "label": "💎 Nghiệm thu ✨",
+                "label": f"💎 {surface} ✨",
                 "short_label": "💎 Duyệt",
                 "color_type": "acceptance",
                 "title": title,
                 "summary": acc.get("summary", ""),
                 "files_changed": acc.get("files_changed", []),
                 "exit_code": exit_code,
+                "surface": surface,
                 "updated_at": state.get("updated_at", 0.0),
-                "details": f"Trạng thái: {test_st} (Exit {exit_code})"
+                "details": f"Nguồn: {surface} | Trạng thái: {test_st} (Exit {exit_code})"
             }
         elif status == "EXECUTING":
             return {

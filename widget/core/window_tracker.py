@@ -123,29 +123,33 @@ def find_codex_window(include_minimized=False, preferred_hwnd=None, strict_prefe
     codex_hwnds.sort(key=lambda x: x[7], reverse=True)
     minimized_codex_hwnds.sort(key=lambda x: x[7], reverse=True)
 
-    # Once an overlay is owned by a specific Codex HWND, finding a different
-    # Codex window is not a valid fallback.  During minimize/restore Windows
-    # can briefly omit the owner from EnumWindows; choosing another candidate
-    # made the widget reappear detached from the window the user minimized.
+    # 1. If the user is actively focused on a visible Antigravity window (either
+    #    Antigravity 2.0 or Antigravity IDE), immediately switch to that foreground window.
+    for item in codex_hwnds:
+        if item[0] == foreground or (foreground_pid.value and item[6] == foreground_pid.value and item[7] > 10000000):
+            return item[:6]
+
+    # 2. If preferred_hwnd is still VISIBLE on screen (not minimized), keep it
+    #    (e.g. when clicking the widget itself or a popup while the IDE is right behind it).
     if preferred_hwnd:
-        for candidates in (codex_hwnds, minimized_codex_hwnds):
-            for item in candidates:
+        for item in codex_hwnds:
+            if item[0] == preferred_hwnd:
+                return item[:6]
+
+    # 3. If preferred_hwnd was minimized or closed, but another Antigravity window
+    #    (e.g. Antigravity IDE while Antigravity 2.0 is minimized) is visible on screen,
+    #    always bind to the visible window instead of staying stuck on a minimized one.
+    if codex_hwnds:
+        return codex_hwnds[0][:6]
+
+    # 4. Only when NO Antigravity window is visible on screen (all are minimized):
+    if include_minimized and minimized_codex_hwnds:
+        if preferred_hwnd:
+            for item in minimized_codex_hwnds:
                 if item[0] == preferred_hwnd:
                     return item[:6]
-        if strict_preferred:
+        if strict_preferred and preferred_hwnd:
             return None
-
-    def choose(candidates):
-        if not candidates:
-            return None
-        # Foreground match if it is one of the candidates
-        for item in candidates:
-            if foreground_pid.value and item[6] == foreground_pid.value and item[7] > 10000000:
-                return item[:6]
-        return candidates[0][:6]
-
-    if codex_hwnds:
-        return choose(codex_hwnds)
-    if include_minimized and minimized_codex_hwnds:
-        return choose(minimized_codex_hwnds)
+        return minimized_codex_hwnds[0][:6]
     return None
+

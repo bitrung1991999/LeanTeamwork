@@ -24,6 +24,8 @@ from .win32_types import (
     kernel32, user32, gdi32, gdiplus
 )
 
+LOG_PATH = Path(__file__).resolve().parent.parent / 'widget_crash.log'
+
 
 def create_pill_path(x, y, w, h, r):
     path = c.c_void_p()
@@ -33,6 +35,18 @@ def create_pill_path(x, y, w, h, r):
     gdiplus.GdipAddPathArc(path, c.c_float(x + w - dia), c.c_float(y), c.c_float(dia), c.c_float(dia), c.c_float(270), c.c_float(90))
     gdiplus.GdipAddPathArc(path, c.c_float(x + w - dia), c.c_float(y + h - dia), c.c_float(dia), c.c_float(dia), c.c_float(0), c.c_float(90))
     gdiplus.GdipAddPathArc(path, c.c_float(x), c.c_float(y + h - dia), c.c_float(dia), c.c_float(dia), c.c_float(90), c.c_float(90))
+    gdiplus.GdipClosePathFigure(path)
+    return path
+
+
+def create_top_rounded_path(x, y, w, h, r):
+    """Tạo path bo góc trên (trái & phải) và đáy phẳng cho thanh tiêu đề thẻ kết quả."""
+    path = c.c_void_p()
+    gdiplus.GdipCreatePath(0, c.byref(path))
+    dia = 2.0 * r
+    gdiplus.GdipAddPathArc(path, c.c_float(x), c.c_float(y), c.c_float(dia), c.c_float(dia), c.c_float(180.0), c.c_float(90.0))
+    gdiplus.GdipAddPathArc(path, c.c_float(x + w - dia), c.c_float(y), c.c_float(dia), c.c_float(dia), c.c_float(270.0), c.c_float(90.0))
+    gdiplus.GdipAddPathLine(path, c.c_float(x + w), c.c_float(y + h), c.c_float(x), c.c_float(y + h))
     gdiplus.GdipClosePathFigure(path)
     return path
 
@@ -78,21 +92,22 @@ class TeamworkGlassPopover:
         )
         user32.RegisterClassW(c.byref(wc))
 
-        # Owned, non-topmost popup: it stays with the widget and never covers
-        # another foreground application.
-        ex_style = 0x00080000 | 0x00000080  # WS_EX_LAYERED | WS_EX_TOOLWINDOW
+        # Owned, topmost layered tool window: it floats reliably above full-screen IDEs and Windows apps
+        ex_style = 0x00080000 | 0x00000080 | 0x08000000 | 0x00000008  # WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST
         parent_hwnd = getattr(self.parent, 'hwnd', None) if self.parent else None
         self.hwnd = user32.CreateWindowExW(
             ex_style,
             'TeamworkGlassPopoverV2',
             'LeanTeamworkGlassPopover',
-            0x80000000,  # WS_POPUP; shown only by an explicit chip click.
+            0x80000000,  # WS_POPUP
             0, 0, self.w, self.h,
             parent_hwnd, None, hinst, None
         )
-        # Defensive demotion: this panel must never become system-topmost
         if self.hwnd:
-            user32.SetWindowPos(self.hwnd, c.c_void_p(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+            user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+        with LOG_PATH.open('a', encoding='utf-8') as f:
+            f.write(f"TeamworkGlassPopover.init_window(): hwnd={self.hwnd}, err={kernel32.GetLastError()}\n")
+            f.flush()
 
     def contains_point(self, sx, sy):
         if not self.visible or not self.hwnd:
@@ -134,11 +149,11 @@ class TeamworkGlassPopover:
 
         if st == "PROPOSAL":
             prop = state.get("proposal") or {}
-            title = prop.get("title", "Đề Xuất Kế Hoạch Kỹ Thuật")
-            options = prop.get("options", [])
+            title = prop.get("title") or "Đề Xuất Kế Hoạch Kỹ Thuật"
+            options = prop.get("options") or []
 
             # Chiều cao tiêu đề (Word wrap)
-            title_lines = max(1, math.ceil(len(title) / 48.0))
+            title_lines = max(1, math.ceil(len(str(title)) / 48.0))
             title_h = round((26.0 + title_lines * 24.0) * scale_box)
 
             header_h = round(18.0 * scale_box) + round(26.0 * scale_box) + title_h + round(38.0 * scale_box)
@@ -146,16 +161,28 @@ class TeamworkGlassPopover:
             # Tính chiều cao cho từng ô phương án dựa vào độ dài text
             boxes = []
             curr_y = header_h
-            for opt in options[:4]:
-                opt_txt = opt.get("text", "")
-                is_rec = opt.get("recommended", False)
+            for idx, opt in enumerate(options[:4], 1):
+                if isinstance(opt, dict):
+                    opt_id = opt.get("id", idx)
+                    opt_txt = str(opt.get("text") or f"Phương án {opt_id}")
+                    is_rec = bool(opt.get("recommended", False))
+                else:
+                    opt_id = idx
+                    opt_txt = str(opt or f"Phương án {opt_id}")
+                    lower_txt = opt_txt.lower()
+                    is_rec = ("recommended" in lower_txt or "khuyên dùng" in lower_txt or "khuyen dung" in lower_txt or idx == 1)
+
                 prefix_len = 18 if is_rec else 6
                 total_len = len(opt_txt) + prefix_len
                 opt_lines = max(1, math.ceil(total_len / 46.0))
                 # Mỗi dòng font 18pt cần khoảng 26px
                 box_h = max(round(58.0 * scale_box), round((22.0 + opt_lines * 24.0) * scale_box))
                 boxes.append({
-                    "opt": opt,
+                    "opt": {
+                        "id": opt_id,
+                        "text": opt_txt,
+                        "recommended": is_rec
+                    },
                     "y": curr_y,
                     "h": box_h
                 })
@@ -169,18 +196,22 @@ class TeamworkGlassPopover:
 
         elif st == "ACCEPTANCE":
             acc = state.get("acceptance") or {}
-            title = acc.get("title", "Báo Cáo Nghiệm Thu Hoàn Thiện")
-            summary = acc.get("summary", "Toàn bộ bài toán đã thực thi và kiểm thử đạt 100% PASS.")
-            files = acc.get("files_changed", [])
+            surface = acc.get("surface") or state.get("surface") or "Antigravity 2.0"
+            title = acc.get("title") or "Báo Cáo Nghiệm Thu Hoàn Thiện"
+            summary = acc.get("summary") or "Toàn bộ bài toán đã thực thi và kiểm thử đạt 100% PASS."
+            files = acc.get("files_changed") or []
+            if not isinstance(files, list):
+                files = [str(files)]
 
-            title_lines = max(1, math.ceil(len(title) / 48.0))
+            title_lines = max(1, math.ceil(len(str(title)) / 48.0))
             title_h = round((24.0 + title_lines * 24.0) * scale_box)
 
             # Summary text lines
-            files_str = "\nCác file: " + ", ".join([os.path.basename(f) for f in files[:4]]) if files else ""
-            sum_text = summary + files_str
+            files_str = "\nCác file: " + ", ".join([os.path.basename(str(f)) for f in files[:4]]) if files else ""
+            sum_text = str(summary) + files_str
             sum_lines = max(2, math.ceil(len(sum_text) / 62.0) + (1 if files else 0))
-            sum_h = max(round(120.0 * scale_box), round((28.0 + sum_lines * 24.0) * scale_box))
+            res_hdr_h = round(34.0 * scale_box)
+            sum_h = max(round(130.0 * scale_box), round((32.0 + sum_lines * 24.0) * scale_box) + res_hdr_h)
 
             btn_h = round(64.0 * scale_box)
             pad_top = round(16.0 * scale_box)
@@ -193,6 +224,8 @@ class TeamworkGlassPopover:
             total_h = btn_y + btn_h + round(24.0 * scale_box)
 
             self.h = int(min(work_h - 40, total_h))
+            layout_info["surface"] = surface
+            layout_info["res_hdr_h"] = res_hdr_h
             layout_info["title_h"] = title_h
             layout_info["sum_y"] = sum_y
             layout_info["sum_h"] = sum_h
@@ -233,7 +266,7 @@ class TeamworkGlassPopover:
         self.pos_x = max(work_left + 10, min(pos_x, work_right - self.w - 10))
         self.pos_y = max(work_top + 10, min(pos_y, work_bottom - self.h - 10))
 
-        user32.SetWindowPos(self.hwnd, 0, self.pos_x, self.pos_y, self.w, self.h, 0x0040 | 0x0010)
+        user32.SetWindowPos(self.hwnd, -1, self.pos_x, self.pos_y, self.w, self.h, 0x0040 | 0x0010)
 
     def show(self, target_rect):
         now = time.monotonic()
@@ -312,16 +345,41 @@ class TeamworkGlassPopover:
                     self.render()
                 return 0
 
+            elif msg == 0x0201:  # WM_LBUTTONDOWN
+                cx = c.c_short(lp & 0xFFFF).value
+                cy = c.c_short((lp >> 16) & 0xFFFF).value
+                self._pressed_btn_id = None
+                for region in self.clickable_regions:
+                    rx, ry, rw, rh = region['rect']
+                    if rx <= cx <= rx + rw and ry <= cy <= ry + rh:
+                        self._pressed_btn_id = region['id']
+                        break
+                return 0
+
             elif msg == 0x0202:  # WM_LBUTTONUP
-                if self.hover_btn_id is not None:
-                    self.handle_click(self.hover_btn_id)
+                cx = c.c_short(lp & 0xFFFF).value
+                cy = c.c_short((lp >> 16) & 0xFFFF).value
+                target_btn = None
+                for region in self.clickable_regions:
+                    rx, ry, rw, rh = region['rect']
+                    if rx <= cx <= rx + rw and ry <= cy <= ry + rh:
+                        target_btn = region['id']
+                        break
+                if not target_btn:
+                    target_btn = getattr(self, '_pressed_btn_id', None) or self.hover_btn_id
+                self._pressed_btn_id = None
+                if target_btn is not None:
+                    self.handle_click(target_btn)
                 return 0
 
             elif msg == 0x02A3:  # WM_MOUSELEAVE
                 if self.hover_btn_id is not None:
                     self.hover_btn_id = None
                     self.render()
-                self.parent.popover_until = time.monotonic() + 1.5
+                tw_service = getattr(self.parent, 'teamwork_service', None)
+                st = tw_service.get_state().get('status', 'IDLE') if tw_service else 'IDLE'
+                if st not in ('PROPOSAL', 'ACCEPTANCE'):
+                    self.parent.popover_until = time.monotonic() + 1.5
                 return 0
 
         except Exception:
@@ -329,12 +387,12 @@ class TeamworkGlassPopover:
         return user32.DefWindowProcW(hwnd, msg, wp, lp)
 
     def handle_click(self, btn_id):
-        # 1. Anti-Spam Debounce Lock: khóa nút 2.5s chống spam click khi máy lag
+        # 1. Anti-Spam Debounce Lock: khóa nút 1.0s chống spam click
         now = time.monotonic()
         if now < getattr(self, '_action_locked_until', 0.0):
             return
-        self._action_locked_until = now + 2.5
-        self.suppress_until = now + 3.0
+        self._action_locked_until = now + 1.0
+        self.suppress_until = now + 1.5
 
         tw_service = getattr(self.parent, 'teamwork_service', None)
         if not tw_service:
@@ -351,16 +409,34 @@ class TeamworkGlassPopover:
                 opt_id = region.get('opt_id')
                 opt_txt = region.get('opt_txt', '')
 
-                if action == 'SELECT_OPTION':
-                    if hasattr(self.parent, '_proposal_auto_handled'):
-                        self.parent._proposal_auto_handled = True
+                if action == 'CLOSE':
+                    self.hide()
+                    if self.parent:
+                        self.parent.popover_until = 0.0
+                    return
+
+                elif action == 'SELECT_OPTION':
+                    self.hide()
+                    if self.parent:
+                        self.parent.popover_until = 0.0
+                        if hasattr(self.parent, '_proposal_auto_handled'):
+                            self.parent._proposal_auto_handled = True
                     tw_service.submit_response('SELECT_OPTION', option_id=opt_id, note=opt_txt)
+                    return
 
                 elif action == 'ACCEPT':
+                    self.hide()
+                    if self.parent:
+                        self.parent.popover_until = 0.0
                     tw_service.submit_response('ACCEPT')
+                    return
 
                 elif action == 'DEBUG':
+                    self.hide()
+                    if self.parent:
+                        self.parent.popover_until = 0.0
                     tw_service.submit_response('DEBUG')
+                    return
 
                 elif action == 'FOCUS_IDE':
                     self.focus_antigravity()
@@ -490,6 +566,11 @@ class TeamworkGlassPopover:
         gdiplus.GdipSetStringFormatAlign(fmt_center, 1)
         gdiplus.GdipSetStringFormatLineAlign(fmt_center, 1)
 
+        fmt_right = c.c_void_p()
+        gdiplus.GdipCreateStringFormat(0, 0, c.byref(fmt_right))
+        gdiplus.GdipSetStringFormatAlign(fmt_right, 2)
+        gdiplus.GdipSetStringFormatLineAlign(fmt_right, 1)
+
         cyan_b = make_brush(ARGB(255, 2, 132, 199) if not is_dark else ARGB(255, 56, 189, 248))
         green_b = make_brush(ARGB(255, 5, 150, 105) if not is_dark else ARGB(255, 52, 211, 153))
 
@@ -499,6 +580,8 @@ class TeamworkGlassPopover:
         if st == "PROPOSAL":
             prop = state.get("proposal") or {}
             title = prop.get("title", "Đề Xuất Kế Hoạch Kỹ Thuật")
+            prop_surf = prop.get("surface") or state.get("surface") or "Antigravity 2.0"
+            prop_is_v2 = ("2.0" in prop_surf or ("Antigravity" in prop_surf and "IDE" not in prop_surf))
             now = time.time()
             deadline = prop.get("deadline_ts", now)
             duration = max(1, prop.get("duration_seconds", 150))
@@ -506,9 +589,9 @@ class TeamworkGlassPopover:
             mins, secs = rem // 60, rem % 60
             timer_text = f"{mins:02d}:{secs:02d}"
 
-            # Badge
+            # Badge 1: Đề xuất kỹ thuật
             badge_h = round(26.0 * scale_box)
-            badge_w = round(230.0 * scale_box)
+            badge_w = round(210.0 * scale_box)
             badge_path = create_pill_path(pad_x, round(16.0 * scale_box), badge_w, badge_h, 6.0)
             badge_bg = make_brush(ARGB(230, 224, 242, 254) if not is_dark else ARGB(60, 56, 189, 248))
             gdiplus.GdipFillPath(gfx, badge_bg, badge_path)
@@ -516,6 +599,53 @@ class TeamworkGlassPopover:
             b_rect = (c.c_float * 4)(pad_x + 10.0, round(16.0 * scale_box), badge_w - 12.0, badge_h)
             gdiplus.GdipDrawString(gfx, "🧭 ĐỀ XUẤT KỸ THUẬT", -1, font_badge, b_rect, fmt_left, cyan_b)
             gdiplus.GdipDeletePath(badge_path)
+
+            # Badge 2: Surface Badge
+            p_surf_w = round(180.0 * scale_box)
+            p_surf_x = pad_x + badge_w + round(10.0 * scale_box)
+            p_surf_path = create_pill_path(p_surf_x, round(16.0 * scale_box), p_surf_w, badge_h, 6.0)
+            if prop_is_v2:
+                p_s_bg = make_brush(ARGB(230, 243, 232, 255) if not is_dark else ARGB(60, 168, 85, 247))
+                p_s_pen = make_pen(ARGB(220, 192, 132, 252) if not is_dark else ARGB(180, 168, 85, 247), 1.2)
+                p_s_txt_b = make_brush(ARGB(255, 126, 34, 206) if not is_dark else ARGB(255, 216, 180, 254))
+                p_s_label = "⚡ ANTIGRAVITY 2.0"
+            else:
+                p_s_bg = make_brush(ARGB(230, 224, 242, 254) if not is_dark else ARGB(60, 56, 189, 248))
+                p_s_pen = make_pen(ARGB(220, 125, 211, 252) if not is_dark else ARGB(180, 56, 189, 248), 1.2)
+                p_s_txt_b = make_brush(ARGB(255, 3, 105, 161) if not is_dark else ARGB(255, 125, 211, 252))
+                p_s_label = "💻 ANTIGRAVITY IDE"
+
+            gdiplus.GdipFillPath(gfx, p_s_bg, p_surf_path)
+            gdiplus.GdipDrawPath(gfx, p_s_pen, p_surf_path)
+            gdiplus.GdipDeleteBrush(p_s_bg)
+            gdiplus.GdipDeletePen(p_s_pen)
+            ps_rect = (c.c_float * 4)(p_surf_x + 10.0, round(16.0 * scale_box), p_surf_w - 12.0, badge_h)
+            gdiplus.GdipDrawString(gfx, p_s_label, -1, font_badge, ps_rect, fmt_left, p_s_txt_b)
+            gdiplus.GdipDeleteBrush(p_s_txt_b)
+            gdiplus.GdipDeletePath(p_surf_path)
+
+            # Nút Đóng [✕] ở góc trên bên phải
+            btn_close_size = round(24.0 * scale_box)
+            btn_close_x = pad_x + content_w - btn_close_size
+            btn_close_y = round(16.0 * scale_box)
+            is_close_hover = (self.hover_btn_id == "btn_close")
+
+            c_bg = make_brush(ARGB(180, 239, 68, 68) if is_close_hover else (ARGB(40, 255, 255, 255) if is_dark else ARGB(40, 0, 0, 0)))
+            c_path = create_pill_path(btn_close_x, btn_close_y, btn_close_size, btn_close_size, btn_close_size / 2.0)
+            gdiplus.GdipFillPath(gfx, c_bg, c_path)
+            gdiplus.GdipDeleteBrush(c_bg)
+            gdiplus.GdipDeletePath(c_path)
+
+            c_txt_brush = make_brush(ARGB(255, 255, 255, 255) if is_close_hover else (ARGB(200, 203, 213, 225) if is_dark else ARGB(200, 100, 116, 139)))
+            c_rect = (c.c_float * 4)(btn_close_x, btn_close_y - 1.0, btn_close_size, btn_close_size)
+            gdiplus.GdipDrawString(gfx, "✕", -1, font_badge, c_rect, fmt_center, c_txt_brush)
+            gdiplus.GdipDeleteBrush(c_txt_brush)
+
+            self.clickable_regions.append({
+                "id": "btn_close",
+                "rect": (btn_close_x - 4, btn_close_y - 4, btn_close_size + 8, btn_close_size + 8),
+                "action": "CLOSE"
+            })
 
             # Title (Hỗ trợ word-wrap không bao giờ bị cắt dòng)
             title_y = round(48.0 * scale_box)
@@ -547,9 +677,9 @@ class TeamworkGlassPopover:
             sub_h = round(24.0 * scale_box)
             sub_rect = (c.c_float * 4)(pad_x, sub_y, content_w, sub_h)
             if rem == 0:
-                timer_line = "⏱️ Hết giờ — Tự động kích hoạt [1] (Khuyên dùng) xuống IDE"
+                timer_line = f"⏱️ Hết giờ — Tự động kích hoạt [1] (Khuyên dùng) xuống {prop_surf}"
             else:
-                timer_line = f"⏱️ Hạn chót: {timer_text} — Click chọn phương án để gửi thẳng xuống Antigravity IDE"
+                timer_line = f"⏱️ Hạn chót: {timer_text} — Click chọn phương án để gửi thẳng xuống {prop_surf}"
             gdiplus.GdipDrawString(gfx, timer_line, -1, font_sub, sub_rect, fmt_left, text_sec)
 
             # Options Boxes (Chiều cao tự co giãn theo text của từng box)
@@ -559,9 +689,9 @@ class TeamworkGlassPopover:
                 opt_y = item["y"]
                 box_h = item["h"]
 
-                opt_id = opt.get("id", 1)
-                opt_txt = opt.get("text", f"Phương án {opt_id}")
-                is_rec = opt.get("recommended", False)
+                opt_id = opt.get("id", 1) if isinstance(opt, dict) else 1
+                opt_txt = opt.get("text", str(opt)) if isinstance(opt, dict) else str(opt)
+                is_rec = opt.get("recommended", False) if isinstance(opt, dict) else False
                 is_h = (self.hover_btn_id == f"opt_{opt_id}")
 
                 box_path = create_pill_path(pad_x, opt_y, content_w, box_h, 8.0)
@@ -601,10 +731,12 @@ class TeamworkGlassPopover:
             title = acc.get("title", "Báo Cáo Nghiệm Thu Hoàn Thiện")
             exit_code = acc.get("exit_code", 0)
             files = acc.get("files_changed", [])
+            surface = layout.get("surface") or acc.get("surface") or state.get("surface") or "Antigravity 2.0"
+            is_v2 = ("2.0" in surface or ("Antigravity" in surface and "IDE" not in surface))
 
-            # Badge
+            # 1. Top Badges: Main Badge + Surface Badge
             badge_h = round(26.0 * scale_box)
-            badge_w = round(260.0 * scale_box)
+            badge_w = round(250.0 * scale_box)
             badge_path = create_pill_path(pad_x, round(16.0 * scale_box), badge_w, badge_h, 6.0)
             badge_bg = make_brush(ARGB(230, 209, 250, 229) if not is_dark else ARGB(60, 52, 211, 153))
             gdiplus.GdipFillPath(gfx, badge_bg, badge_path)
@@ -613,32 +745,123 @@ class TeamworkGlassPopover:
             gdiplus.GdipDrawString(gfx, "💎 NGHIỆM THU HOÀN THIỆN ✨", -1, font_badge, b_rect, fmt_left, green_b)
             gdiplus.GdipDeletePath(badge_path)
 
-            # Title (Word wrap để không bị cụt mép phải)
+            # Surface Badge (Antigravity 2.0 vs Antigravity IDE)
+            surf_badge_w = round(180.0 * scale_box)
+            surf_badge_x = pad_x + badge_w + round(10.0 * scale_box)
+            surf_badge_path = create_pill_path(surf_badge_x, round(16.0 * scale_box), surf_badge_w, badge_h, 6.0)
+            if is_v2:
+                # Purple / Violet Cyber Glass for Antigravity 2.0
+                s_bg = make_brush(ARGB(230, 243, 232, 255) if not is_dark else ARGB(60, 168, 85, 247))
+                s_pen = make_pen(ARGB(220, 192, 132, 252) if not is_dark else ARGB(180, 168, 85, 247), 1.2)
+                s_txt_b = make_brush(ARGB(255, 126, 34, 206) if not is_dark else ARGB(255, 216, 180, 254))
+                s_label = "⚡ ANTIGRAVITY 2.0"
+            else:
+                # Cyan / Blue Cyber Glass for Antigravity IDE
+                s_bg = make_brush(ARGB(230, 224, 242, 254) if not is_dark else ARGB(60, 56, 189, 248))
+                s_pen = make_pen(ARGB(220, 125, 211, 252) if not is_dark else ARGB(180, 56, 189, 248), 1.2)
+                s_txt_b = make_brush(ARGB(255, 3, 105, 161) if not is_dark else ARGB(255, 125, 211, 252))
+                s_label = "💻 ANTIGRAVITY IDE"
+
+            gdiplus.GdipFillPath(gfx, s_bg, surf_badge_path)
+            gdiplus.GdipDrawPath(gfx, s_pen, surf_badge_path)
+            gdiplus.GdipDeleteBrush(s_bg)
+            gdiplus.GdipDeletePen(s_pen)
+            sb_rect = (c.c_float * 4)(surf_badge_x + 10.0, round(16.0 * scale_box), surf_badge_w - 12.0, badge_h)
+            gdiplus.GdipDrawString(gfx, s_label, -1, font_badge, sb_rect, fmt_left, s_txt_b)
+            gdiplus.GdipDeleteBrush(s_txt_b)
+            gdiplus.GdipDeletePath(surf_badge_path)
+
+            # Nút Đóng [✕] ở góc trên bên phải
+            btn_close_size = round(24.0 * scale_box)
+            btn_close_x = pad_x + content_w - btn_close_size
+            btn_close_y = round(16.0 * scale_box)
+            is_close_hover = (self.hover_btn_id == "btn_close")
+
+            c_bg = make_brush(ARGB(180, 239, 68, 68) if is_close_hover else (ARGB(40, 255, 255, 255) if is_dark else ARGB(40, 0, 0, 0)))
+            c_path = create_pill_path(btn_close_x, btn_close_y, btn_close_size, btn_close_size, btn_close_size / 2.0)
+            gdiplus.GdipFillPath(gfx, c_bg, c_path)
+            gdiplus.GdipDeleteBrush(c_bg)
+            gdiplus.GdipDeletePath(c_path)
+
+            c_txt_brush = make_brush(ARGB(255, 255, 255, 255) if is_close_hover else (ARGB(200, 203, 213, 225) if is_dark else ARGB(200, 100, 116, 139)))
+            c_rect = (c.c_float * 4)(btn_close_x, btn_close_y - 1.0, btn_close_size, btn_close_size)
+            gdiplus.GdipDrawString(gfx, "✕", -1, font_badge, c_rect, fmt_center, c_txt_brush)
+            gdiplus.GdipDeleteBrush(c_txt_brush)
+
+            self.clickable_regions.append({
+                "id": "btn_close",
+                "rect": (btn_close_x - 4, btn_close_y - 4, btn_close_size + 8, btn_close_size + 8),
+                "action": "CLOSE"
+            })
+
+            # 2. Title (Word wrap để không bị cụt mép phải)
             title_y = round(48.0 * scale_box)
             title_h = layout.get("title_h", round(36.0 * scale_box))
             t_rect = (c.c_float * 4)(pad_x, title_y, content_w, title_h)
             gdiplus.GdipDrawString(gfx, title, -1, font_title, t_rect, fmt_wrap, text_pri)
 
-            # Status sub
-            st_text = f"✓ Kiểm thử: PASS 100% (Exit Code {exit_code}) | {len(files)} files đã thay đổi"
+            # 3. Status subline with Surface attribution
+            st_text = f"✓ Thực thi bởi: {surface} | Kiểm thử: PASS 100% (Exit Code {exit_code}) | {len(files)} files đã thay đổi"
             st_y = title_y + title_h + round(4.0 * scale_box)
             st_h = round(22.0 * scale_box)
             st_rect = (c.c_float * 4)(pad_x, st_y, content_w, st_h)
             gdiplus.GdipDrawString(gfx, st_text, -1, font_sub, st_rect, fmt_left, green_b)
 
-            # Summary Box (Tự co giãn chiều cao theo số lượng chữ)
+            # 4. Result Section Box with Title Bar (Thanh tiêu đề phần kết quả)
             sum_y = layout.get("sum_y", round(110.0 * scale_box))
             sum_h = layout.get("sum_h", round(140.0 * scale_box))
+            res_hdr_h = layout.get("res_hdr_h", round(34.0 * scale_box))
+
+            # Outer box background
             sum_path = create_pill_path(pad_x, sum_y, content_w, sum_h, 8.0)
             sum_b = make_brush(box_bg_norm)
             sum_pen = make_pen(box_border_norm, 1.2)
             gdiplus.GdipFillPath(gfx, sum_b, sum_path)
+
+            # Header bar banner (Thanh tiêu đề nổi bật trên phần kết quả)
+            hdr_path = create_top_rounded_path(pad_x + 1.0, sum_y + 1.0, content_w - 2.0, res_hdr_h, 7.5)
+            if is_v2:
+                # Purple banner for Antigravity 2.0
+                hdr_bg = make_brush(ARGB(240, 243, 232, 255) if not is_dark else ARGB(70, 147, 51, 234))
+                hdr_div_pen = make_pen(ARGB(200, 216, 180, 254) if not is_dark else ARGB(120, 192, 132, 252), 1.2)
+                hdr_txt_left_b = make_brush(ARGB(255, 107, 33, 168) if not is_dark else ARGB(255, 243, 232, 255))
+                hdr_txt_right_b = make_brush(ARGB(255, 126, 34, 206) if not is_dark else ARGB(255, 216, 180, 254))
+                hdr_right_title = "⚡ THỰC HIỆN BỞI: ANTIGRAVITY 2.0"
+            else:
+                # Cyan / Blue banner for Antigravity IDE
+                hdr_bg = make_brush(ARGB(240, 224, 242, 254) if not is_dark else ARGB(70, 14, 165, 233))
+                hdr_div_pen = make_pen(ARGB(200, 125, 211, 252) if not is_dark else ARGB(120, 56, 189, 248), 1.2)
+                hdr_txt_left_b = make_brush(ARGB(255, 3, 105, 161) if not is_dark else ARGB(255, 224, 242, 254))
+                hdr_txt_right_b = make_brush(ARGB(255, 2, 132, 199) if not is_dark else ARGB(255, 125, 211, 252))
+                hdr_right_title = "💻 THỰC HIỆN BỞI: ANTIGRAVITY IDE"
+
+            gdiplus.GdipFillPath(gfx, hdr_bg, hdr_path)
+            gdiplus.GdipDeleteBrush(hdr_bg)
+            gdiplus.GdipDeletePath(hdr_path)
+
+            # Divider line beneath the header bar
+            div_y = sum_y + res_hdr_h
+            gdiplus.GdipDrawLine(gfx, hdr_div_pen, c.c_float(pad_x), c.c_float(div_y), c.c_float(pad_x + content_w), c.c_float(div_y))
+            gdiplus.GdipDeletePen(hdr_div_pen)
+
+            # Draw outer border over the combined box
             gdiplus.GdipDrawPath(gfx, sum_pen, sum_path)
             gdiplus.GdipDeleteBrush(sum_b)
             gdiplus.GdipDeletePen(sum_pen)
             gdiplus.GdipDeletePath(sum_path)
 
-            sum_rect = (c.c_float * 4)(pad_x + 16.0, sum_y + 12.0, content_w - 32.0, sum_h - 24.0)
+            # Left label on Result Header Bar:
+            hdr_left_rect = (c.c_float * 4)(pad_x + 16.0, sum_y, (content_w - 32.0) * 0.45, res_hdr_h)
+            gdiplus.GdipDrawString(gfx, "📋 KẾT QUẢ THỰC THI (RESULT)", -1, font_badge, hdr_left_rect, fmt_left, hdr_txt_left_b)
+            gdiplus.GdipDeleteBrush(hdr_txt_left_b)
+
+            # Right label on Result Header Bar:
+            hdr_right_rect = (c.c_float * 4)(pad_x + 16.0 + (content_w - 32.0) * 0.40, sum_y, (content_w - 32.0) * 0.60, res_hdr_h)
+            gdiplus.GdipDrawString(gfx, hdr_right_title, -1, font_badge, hdr_right_rect, fmt_right, hdr_txt_right_b)
+            gdiplus.GdipDeleteBrush(hdr_txt_right_b)
+
+            # Result content text inside the box (below header bar)
+            sum_rect = (c.c_float * 4)(pad_x + 16.0, sum_y + res_hdr_h + 10.0, content_w - 32.0, sum_h - res_hdr_h - 18.0)
             sum_text = layout.get("sum_text", "")
             gdiplus.GdipDrawString(gfx, sum_text, -1, font_sub, sum_rect, fmt_wrap, text_pri)
 
@@ -667,7 +890,7 @@ class TeamworkGlassPopover:
             gdiplus.GdipDeletePath(b1_path)
 
             b1_rect = (c.c_float * 4)(pad_x, btn_y, btn_w, btn_h)
-            gdiplus.GdipDrawString(gfx, "💎 [100% HOÀN TẤT] ✨\nChấp thuận & Gửi xuống IDE", -1, font_btn, b1_rect, fmt_center, b1_txt_b)
+            gdiplus.GdipDrawString(gfx, f"💎 [100% HOÀN TẤT] ✨\nChấp thuận & Gửi xuống {surface}", -1, font_btn, b1_rect, fmt_center, b1_txt_b)
             if not is_dark:
                 gdiplus.GdipDeleteBrush(b1_txt_b)
 
@@ -697,7 +920,7 @@ class TeamworkGlassPopover:
             gdiplus.GdipDeletePath(b2_path)
 
             b2_rect = (c.c_float * 4)(b2_x, btn_y, btn_w, btn_h)
-            gdiplus.GdipDrawString(gfx, "⚡ [SUPERPOWERS DEBUG]\nYêu cầu rà soát sâu xuống IDE", -1, font_btn, b2_rect, fmt_center, b2_txt_b)
+            gdiplus.GdipDrawString(gfx, f"⚡ [SUPERPOWERS DEBUG]\nYêu cầu rà soát sâu xuống {surface}", -1, font_btn, b2_rect, fmt_center, b2_txt_b)
             if not is_dark:
                 gdiplus.GdipDeleteBrush(b2_txt_b)
 
@@ -766,6 +989,7 @@ class TeamworkGlassPopover:
         gdiplus.GdipDeleteStringFormat(fmt_left)
         gdiplus.GdipDeleteStringFormat(fmt_wrap)
         gdiplus.GdipDeleteStringFormat(fmt_center)
+        gdiplus.GdipDeleteStringFormat(fmt_right)
         gdiplus.GdipDeleteBrush(text_pri)
         gdiplus.GdipDeleteBrush(text_sec)
         gdiplus.GdipDeleteBrush(cyan_b)

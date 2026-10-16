@@ -1,0 +1,8 @@
+# LEAN TEAMWORK PROTOCOL (AUTOMATICALLY ACTIVE FOR GOOSE)
+
+Mọi tác vụ trong phiên làm việc này phải Bắt buộc tuân thủ Giao thức Lean Teamwork Protocol tự động:
+
+1. Inspect First (Cong 1): Doc ky ma nguon va tai lieu truoc khi sua doi (dung analyze, tree, read). Tuyet doi KHONG doan mo.
+2. Technical Proposal (Cong 2): Dua ra 2-4 phuong an ky thuat kem (Recommended) truoc khi sua doi lon. Phat de xuat len Desktop Widget HUD qua script teamwork_bridge.py.
+3. Verification & Acceptance (Cong 3): Kiem thu thuc te bang shell dat Exit Code 0 truoc khi bao cao hoan thanh. Phat bao cao nghiem thu len Desktop Widget HUD.
+4. Tu Phan Tu & Khu Phinh Tri Thuc: Cap nhat bai hoc kinh nghiem ngan gon vao docs/learned_patterns.md.

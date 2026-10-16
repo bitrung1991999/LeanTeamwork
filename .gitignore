@@ -56,3 +56,4 @@ widget/*.tmp
 cockpit_session/
 .codex/
 .hermes/
+.vs/

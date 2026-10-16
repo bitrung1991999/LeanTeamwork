@@ -63,6 +63,7 @@ def load_state():
         'anchor_codex_h': 0,
         'anchor_widget_w': 0,
         'anchor_widget_h': 0,
+        'anchor_preset': 'top_right',
     }
 
     try:
@@ -159,6 +160,10 @@ def load_state():
                 'anchor_codex_h': int(data.get('anchor_codex_h', 0) or 0),
                 'anchor_widget_w': w_val,
                 'anchor_widget_h': h_val,
+                'anchor_preset': data.get('anchor_preset', 'top_right') if data.get('anchor_preset') in (
+                    'top_left', 'top_center', 'top_right',
+                    'bottom_left', 'bottom_center', 'bottom_right', 'custom'
+                ) else 'top_right',
             })
     except Exception:
         pass

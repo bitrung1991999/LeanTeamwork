@@ -127,3 +127,33 @@ hooks_json_data = {
 }
 hooks_json.write_text(json.dumps(hooks_json_data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 print(f'SUCCESS: Created universal global hook pointing to {py_exe} at {GLOBAL_CONFIG_DIR}')
+
+# Đóng gói thành Antigravity Global Plugin để tự động nạp trên mọi workspace
+plugin_dir = GLOBAL_CONFIG_DIR / 'plugins' / 'lean-teamwork-plugin'
+plugin_dir.mkdir(parents=True, exist_ok=True)
+plugin_json = plugin_dir / 'plugin.json'
+plugin_json.write_text(json.dumps({
+    "name": "lean-teamwork-plugin",
+    "version": "1.5.14",
+    "description": "Lean Multi-Agent Protocol & Desktop Widget HUD Integration"
+}, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+plugin_hooks_json = plugin_dir / 'hooks.json'
+plugin_hooks_json.write_text(json.dumps(hooks_json_data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+plugin_rules_dir = plugin_dir / 'rules'
+plugin_rules_dir.mkdir(parents=True, exist_ok=True)
+plugin_agents_md = plugin_rules_dir / 'AGENTS.md'
+plugin_agents_md.write_text("""# 🧭 Lean Teamwork Global Operating Rules
+
+Quy chuẩn nạp bắt buộc cho Antigravity trên toàn bộ các dự án.
+
+## 1. Điều Phối Kỹ Thuật (Decoupled Desktop Widget HUD)
+- Khi bắt đầu lập trình hoặc chọn giải pháp kỹ thuật: BẮT BUỘC kích hoạt `🧭 [ĐỀ XUẤT KỸ THUẬT]` qua lệnh:
+  `py -c "import teamwork_bridge; teamwork_bridge.publish_proposal('<Tiêu đề>', ['Phương án 1 (Recommended)', 'Phương án 2'], 150)"`
+  để mở thẻ tương tác trực tiếp lên Desktop Widget HUD ngoài màn hình.
+- Khi hoàn thành code và test pass: BẮT BUỘC kích hoạt `💎 [NGHIỆM THU HOÀN THIỆN]` qua lệnh:
+  `py -c "import teamwork_bridge; teamwork_bridge.publish_acceptance('<Tiêu đề>', '<Tóm tắt>', ['file1', 'file2'])"`
+- Tuyệt đối không dùng modal `ask_question` làm che khuất khung chat.
+""", encoding='utf-8')
+print(f'SUCCESS: Created global plugin at {plugin_dir}')

@@ -318,10 +318,198 @@ class TestTeamworkWidgetIntegration(unittest.TestCase):
         self.assertIn("[WIDGET_SELECTION]", out)
         self.assertIn("Phương án [2]", out)
 
+    def test_09_string_options_proposal_and_popover_layout(self):
+        """Test phát đề xuất với options dạng danh sách chuỗi và popover tính layout chuẩn xác."""
+        from core.teamwork_popover import TeamworkGlassPopover
+        str_options = [
+            "Phương án 1 (Recommended)",
+            "Phương án 2: Dùng endpoint hiện có"
+        ]
+        ok = teamwork_bridge.publish_proposal("Test String Options", str_options, duration_seconds=150)
+        self.assertTrue(ok)
+
+        st = teamwork_bridge.get_bridge_state()
+        self.assertEqual(st["status"], "PROPOSAL")
+
+        dummy_parent = type('DummyParent', (), {'s': {'scale_percent': 100}})()
+        pop = TeamworkGlassPopover.__new__(TeamworkGlassPopover)
+        pop.parent = dummy_parent
+
+        layout = pop.compute_dynamic_layout(st)
+        self.assertEqual(layout["st"], "PROPOSAL")
+        self.assertEqual(len(layout["boxes"]), 2)
+        self.assertEqual(layout["boxes"][0]["opt"]["id"], 1)
+        self.assertTrue(layout["boxes"][0]["opt"]["recommended"])
+        self.assertEqual(layout["boxes"][1]["opt"]["id"], 2)
+
+        # Test edge case: None title / options / acceptance
+        pop.compute_dynamic_layout({'status': 'PROPOSAL', 'proposal': {'title': None, 'options': None}})
+        pop.compute_dynamic_layout({'status': 'ACCEPTANCE', 'acceptance': {'title': None, 'summary': None, 'files_changed': None}})
+
+    def test_15_surface_detection_and_result_header_bar(self):
+        """Test phát hiện môi trường Antigravity 2.0 vs IDE và tính toán layout thanh tiêu đề kết quả."""
+        from core.teamwork_popover import TeamworkGlassPopover
+        tw_service = get_teamwork_service()
+
+        # 1. Phát hiện surface tự động
+        detected = teamwork_bridge.detect_antigravity_surface()
+        self.assertIn(detected, ["Antigravity 2.0", "Antigravity IDE"])
+
+        # 2. Phát acceptance với surface Antigravity 2.0
+        teamwork_bridge.publish_acceptance(
+            "Test Surface 2.0", "Nội dung kiểm thử kết quả trên Antigravity 2.0",
+            files_changed=["widget/core/teamwork_popover.py"], exit_code=0, surface="Antigravity 2.0"
+        )
+        st_v2 = teamwork_bridge.get_bridge_state()
+        self.assertEqual(st_v2["acceptance"]["surface"], "Antigravity 2.0")
+
+        disp_v2 = tw_service.get_display_info()
+        self.assertEqual(disp_v2["surface"], "Antigravity 2.0")
+        self.assertIn("Antigravity 2.0", disp_v2["label"])
+
+        dummy_parent = type('DummyParent', (), {'s': {'scale_percent': 100}})()
+        pop = TeamworkGlassPopover.__new__(TeamworkGlassPopover)
+        pop.parent = dummy_parent
+
+        layout_v2 = pop.compute_dynamic_layout(st_v2)
+        self.assertEqual(layout_v2["surface"], "Antigravity 2.0")
+        self.assertIn("res_hdr_h", layout_v2)
+        self.assertGreater(layout_v2["res_hdr_h"], 0)
+
+        # 3. Phát acceptance với surface Antigravity IDE
+        teamwork_bridge.publish_acceptance(
+            "Test Surface IDE", "Nội dung kiểm thử kết quả trên Antigravity IDE",
+            files_changed=["scripts/teamwork_bridge.py"], exit_code=0, surface="Antigravity IDE"
+        )
+        st_ide = teamwork_bridge.get_bridge_state()
+        self.assertEqual(st_ide["acceptance"]["surface"], "Antigravity IDE")
+
+        disp_ide = tw_service.get_display_info()
+        self.assertEqual(disp_ide["surface"], "Antigravity IDE")
+        self.assertIn("Antigravity IDE", disp_ide["label"])
+
+        layout_ide = pop.compute_dynamic_layout(st_ide)
+        self.assertEqual(layout_ide["surface"], "Antigravity IDE")
+        self.assertEqual(layout_ide["res_hdr_h"], layout_v2["res_hdr_h"])
+
+    def test_16_close_proposal_and_popover_dismiss(self):
+        """Test cơ chế đóng bảng đề xuất popover ngay khi chọn phương án hoặc bấm nút đóng [✕]."""
+        from core.teamwork_popover import TeamworkGlassPopover
+        tw_service = get_teamwork_service()
+
+        # 1. Phát đề xuất
+        teamwork_bridge.publish_proposal("Test Proposal Close", [
+            {"id": 1, "text": "Phương án 1 (Recommended)", "recommended": True},
+            {"id": 2, "text": "Phương án 2"}
+        ], duration_seconds=150)
+        st = teamwork_bridge.get_bridge_state()
+        self.assertEqual(st["status"], "PROPOSAL")
+        self.assertIsNotNone(st["proposal"])
+
+        # 2. Gọi close_proposal từ bridge -> Trạng thái lập tức chuyển sang EXECUTING, xóa proposal
+        ok = teamwork_bridge.close_proposal(selected_option_id=1, note="User picked 1")
+        self.assertTrue(ok)
+        st_after = teamwork_bridge.get_bridge_state()
+        self.assertEqual(st_after["status"], "EXECUTING")
+        self.assertIsNone(st_after["proposal"])
+        self.assertEqual(st_after["response"]["action"], "SELECT_OPTION")
+        self.assertEqual(st_after["response"]["selected_option_id"], 1)
+
+        # 3. Test popover handle_click('btn_close') và handle_click('opt_1')
+        dummy_parent = type('DummyParent', (), {
+            's': {'scale_percent': 100},
+            'popover_until': 1000.0,
+            'teamwork_service': tw_service
+        })()
+        pop = TeamworkGlassPopover.__new__(TeamworkGlassPopover)
+        pop.parent = dummy_parent
+        pop.hwnd = None
+        pop.visible = True
+        pop.hover_btn_id = None
+        pop.clickable_regions = [
+            {"id": "btn_close", "action": "CLOSE"},
+            {"id": "opt_1", "action": "SELECT_OPTION", "opt_id": 1, "opt_txt": "Option 1"}
+        ]
+
+        # Click nút đóng [✕]
+        pop.handle_click("btn_close")
+        self.assertFalse(pop.visible)
+        self.assertEqual(dummy_parent.popover_until, 0.0)
+
+        # Click chọn phương án
+        pop._action_locked_until = 0.0
+        pop.visible = True
+        dummy_parent.popover_until = 500.0
+        pop.clickable_regions = [
+            {"id": "btn_close", "action": "CLOSE"},
+            {"id": "opt_1", "action": "SELECT_OPTION", "opt_id": 1, "opt_txt": "Option 1"}
+        ]
+        pop.handle_click("opt_1")
+        self.assertFalse(pop.visible)
+        self.assertEqual(dummy_parent.popover_until, 0.0)
+
+        # 4. Test CLI close subcommand
+        import subprocess
+        cli_py = REPO_ROOT / "scripts" / "teamwork_bridge.py"
+        res_c = subprocess.run([
+            sys.executable, str(cli_py), "close", "--option", "2", "--note", "CLI close"
+        ], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(res_c.returncode, 0)
+        self.assertIn("EXECUTING", res_c.stdout)
+        st_cli = teamwork_bridge.get_bridge_state()
+        self.assertEqual(st_cli["status"], "EXECUTING")
+        self.assertIsNone(st_cli["proposal"])
+        self.assertEqual(st_cli["response"]["selected_option_id"], 2)
+
+    def test_17_six_anchor_presets_and_bottom_docking(self):
+        """Test cả 6 vị trí neo (trên/dưới x trái/giữa/phải) và không bị ép rel_y > 400 về 40."""
+        from core.overlay_window import CockpitOverlayApp
+        app = CockpitOverlayApp.__new__(CockpitOverlayApp)
+        app.w = 600
+        app.h = 48
+        app.last_codex_hwnd = None
+        app.last_codex_rect = (-8, -8, 1928, 1048)
+        app.s = {
+            'locked': True,
+            'anchor_preset': 'top_right',
+            'rel_x': None,
+            'rel_y': None,
+            'x': 500,
+            'y': 40,
+            'scale_percent': 100,
+            'orientation': 'horizontal',
+            'theme': 'cards',
+        }
+
+        coords = {}
+        for preset in ('top_left', 'top_center', 'top_right', 'bottom_left', 'bottom_center', 'bottom_right'):
+            tx, ty, rx, ry = app._compute_preset_coords(preset, app.last_codex_rect)
+            coords[preset] = (tx, ty, rx, ry)
+
+        # Kiểm tra trục X: left < center < right cho cả trên và dưới
+        self.assertLess(coords['top_left'][0], coords['top_center'][0])
+        self.assertLess(coords['top_center'][0], coords['top_right'][0])
+        self.assertLess(coords['bottom_left'][0], coords['bottom_center'][0])
+        self.assertLess(coords['bottom_center'][0], coords['bottom_right'][0])
+
+        # Kiểm tra trục Y: các vị trí dưới (bottom_*) phải nằm ở đáy (> 600px), không bị reset về 40
+        for b_preset in ('bottom_left', 'bottom_center', 'bottom_right'):
+            tx, ty, rx, ry = coords[b_preset]
+            self.assertGreater(ty, 600, f"{b_preset} target_y={ty} phải nằm ở nửa dưới màn hình")
+            self.assertGreater(ry, 600, f"{b_preset} rel_y={ry} không được bị ép về 40")
+
+        # Kiểm tra trục Y: các vị trí trên (top_*) nằm ở phần đỉnh (< 100px)
+        for t_preset in ('top_left', 'top_center', 'top_right'):
+            tx, ty, rx, ry = coords[t_preset]
+            self.assertLess(ty, 100, f"{t_preset} target_y={ty} phải nằm ở cạnh trên")
+
+    def test_18_dual_window_tracker_prefers_visible_over_minimized(self):
+        """Test khi mở song song Antigravity 2.0 và Antigravity IDE, cửa sổ đang mở luôn được ưu tiên hơn cửa sổ đã thu nhỏ."""
+        from core.window_tracker import is_codex_desktop_image
+        self.assertTrue(is_codex_desktop_image(r"C:\Users\User\AppData\Local\Programs\Antigravity\Antigravity.exe"))
+        self.assertTrue(is_codex_desktop_image(r"C:\Users\User\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe"))
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
-
 

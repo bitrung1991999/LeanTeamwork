@@ -33,7 +33,7 @@ foreach ($cls in @('AntigravityQuotaWidgetV10Pro')) {
 # Chỉ đóng tiến trình Python thuộc riêng AntigravityWidget để giải phóng Mutex, tuyệt đối không chạm vào Codex/Cockpit
 $escapedDir = [regex]::Escape($projectDir)
 Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Where-Object {
-  $_.CommandLine -and ($_.CommandLine -match $escapedDir)
+  $_.CommandLine -and ($_.CommandLine -match $escapedDir -or $_.CommandLine -match '(^|[\s"\\])main\.py(\s|"|$)')
 } | ForEach-Object {
   Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
 }
@@ -72,9 +72,11 @@ if (-not $pyw) {
     }
 }
 
-if ($pyw -and (Test-Path "$projectDir\main.py")) {
-  Start-Process -FilePath $pyw -ArgumentList "main.py" -WorkingDirectory $projectDir -WindowStyle Hidden
-} elseif (Test-Path "$projectDir\main.py") {
-  Start-Process -FilePath "python" -ArgumentList "main.py" -WorkingDirectory $projectDir -WindowStyle Hidden
+$mainPyPath = Join-Path $projectDir "main.py"
+if ($pyw -and (Test-Path $mainPyPath)) {
+  Start-Process -FilePath $pyw -ArgumentList "`"$mainPyPath`"" -WorkingDirectory $projectDir -WindowStyle Hidden
+} elseif (Test-Path $mainPyPath) {
+  Start-Process -FilePath "python" -ArgumentList "`"$mainPyPath`"" -WorkingDirectory $projectDir -WindowStyle Hidden
 }
 Start-Sleep -Milliseconds 500
+

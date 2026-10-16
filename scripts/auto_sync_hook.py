@@ -74,15 +74,36 @@ def main():
             if resp and not resp.get('handled'):
                 resp['handled'] = True
                 b_data['response'] = resp
-                bridge_file.write_text(json.dumps(b_data, ensure_ascii=False, indent=2), encoding='utf-8')
                 act = resp.get('action')
                 if act == 'SELECT_OPTION':
                     opt_id = resp.get('selected_option_id')
+                    b_data['status'] = 'EXECUTING'
+                    b_data['proposal'] = None
                     widget_event_msg = f"\n\n🖱️ [SỰ KIỆN TỪ WIDGET DESKTOP]: Người dùng vừa bấm CHỌN PHƯƠNG ÁN [{opt_id}] trực tiếp từ Antigravity Desktop Widget! Hãy thi hành ngay theo phương án này!"
                 elif act == 'ACCEPT':
+                    b_data['status'] = 'IDLE'
+                    b_data['acceptance'] = None
                     widget_event_msg = f"\n\n💎 [SỰ KIỆN TỪ WIDGET DESKTOP]: Người dùng vừa bấm [100% HOÀN TẤT - CHẤP THUẬN NGHIỆM THU] trên Desktop Widget! Hãy tổng kết và hoàn thành!"
                 elif act == 'DEBUG':
+                    b_data['status'] = 'EXECUTING'
+                    b_data['acceptance'] = None
                     widget_event_msg = f"\n\n⚡ [SỰ KIỆN TỪ WIDGET DESKTOP]: Người dùng vừa bấm [SUPERPOWERS DEBUG] trên Desktop Widget! Hãy rà soát sâu!"
+
+            # Tự động đóng bảng đề xuất khi người dùng gửi tin nhắn vào chat
+            if b_data.get('status') == 'PROPOSAL':
+                b_data['status'] = 'EXECUTING'
+                b_data['proposal'] = None
+                b_data['updated_at'] = time.time()
+                if not b_data.get('response'):
+                    b_data['response'] = {
+                        'action': 'SELECT_OPTION',
+                        'selected_option_id': 1,
+                        'note': 'Auto-closed proposal on chat input',
+                        'timestamp': time.time(),
+                        'handled': True
+                    }
+
+            bridge_file.write_text(json.dumps(b_data, ensure_ascii=False, indent=2), encoding='utf-8')
     except Exception:
         pass
 

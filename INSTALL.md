@@ -31,8 +31,8 @@
 Sau khi tải hoặc clone repository về máy tính mới:
 
 ```powershell
-git clone https://github.com/kenshinzx89/antigravity-lean-teamwork.git
-cd antigravity-lean-teamwork
+git clone https://github.com/bitrung1991999/LeanTeamwork.git
+cd LeanTeamwork
 ```
 
 Chạy **DUY NHẤT 1 LỆNH**:

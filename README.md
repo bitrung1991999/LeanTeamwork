@@ -3,12 +3,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kenshinzx89/antigravity-lean-teamwork"><img src="https://img.shields.io/badge/target-Google%20Antigravity%20(Gemini%203.7%2F3.8)-4285F4.svg?style=for-the-badge&logo=google" alt="Google Antigravity Only"></a>
-  <a href="https://github.com/kenshinzx89/antigravity-lean-teamwork"><img src="https://img.shields.io/badge/role-Phanh%20H%C3%A3m%20%E1%BA%A8u%20ABS-FF6D00.svg?style=for-the-badge" alt="Phanh Hãm Ẩu ABS"></a>
-  <a href="https://github.com/kenshinzx89/antigravity-lean-teamwork/releases"><img src="https://img.shields.io/badge/version-1.5.14-00C853.svg?style=for-the-badge" alt="Version"></a>
-  <a href="https://github.com/kenshinzx89/antigravity-lean-teamwork/releases"><img src="https://img.shields.io/badge/release-v1.5.14-blue.svg?style=for-the-badge&logo=github" alt="Release"></a>
-  <a href="https://github.com/kenshinzx89/antigravity-lean-teamwork"><img src="https://img.shields.io/badge/tests-14%2F14%20passing-brightgreen.svg?style=for-the-badge" alt="Tests"></a>
-  <a href="https://github.com/kenshinzx89/antigravity-lean-teamwork"><img src="https://img.shields.io/badge/license-MIT-purple.svg?style=for-the-badge" alt="License"></a>
+  <a href="https://github.com/bitrung1991999/LeanTeamwork"><img src="https://img.shields.io/badge/target-Google%20Antigravity%20(Gemini%203.7%2F3.8)-4285F4.svg?style=for-the-badge&logo=google" alt="Google Antigravity Only"></a>
+  <a href="https://github.com/bitrung1991999/LeanTeamwork"><img src="https://img.shields.io/badge/role-Phanh%20H%C3%A3m%20%E1%BA%A8u%20ABS-FF6D00.svg?style=for-the-badge" alt="Phanh Hãm Ẩu ABS"></a>
+  <a href="https://github.com/bitrung1991999/LeanTeamwork/releases"><img src="https://img.shields.io/badge/version-1.5.14-00C853.svg?style=for-the-badge" alt="Version"></a>
+  <a href="https://github.com/bitrung1991999/LeanTeamwork/releases"><img src="https://img.shields.io/badge/release-v1.5.14-blue.svg?style=for-the-badge&logo=github" alt="Release"></a>
+  <a href="https://github.com/bitrung1991999/LeanTeamwork"><img src="https://img.shields.io/badge/tests-14%2F14%20passing-brightgreen.svg?style=for-the-badge" alt="Tests"></a>
+  <a href="https://github.com/bitrung1991999/LeanTeamwork"><img src="https://img.shields.io/badge/license-MIT-purple.svg?style=for-the-badge" alt="License"></a>
 </p>
 
 <p align="center">
@@ -197,8 +197,8 @@ AI sẽ tự động chạy lệnh `py sync_skill.py`, tự nạp bộ phanh hã
 
 ### Cài Đặt / Cập Nhật Thủ Công (1 Giây)
 ```bash
-git clone https://github.com/kenshinzx89/antigravity-lean-teamwork.git
-cd antigravity-lean-teamwork
+git clone https://github.com/bitrung1991999/LeanTeamwork.git
+cd LeanTeamwork
 
 # Chạy lệnh duy nhất (Cài core, cấu hình hook, chạy 10/10 test)
 py sync_skill.py
